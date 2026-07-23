@@ -607,6 +607,20 @@ a{text-decoration:none;color:inherit;}
     <input type="text" id="songUrlInp" placeholder="https://youtube.com/watch?v=... or video id"/>
     <button onclick="B.updateSong()">update song</button>
   </div>
+
+  <div class="song-settings show" id="subscribeBox">
+    <div class="nb-widget-title">get notified of new posts</div>
+    <label>your email</label>
+    <input type="email" id="subEmailInp" placeholder="you@example.com"/>
+    <button onclick="B.subscribe()">subscribe</button>
+  </div>
+
+  <div class="song-settings" id="notifyBox">
+    <div class="nb-widget-title">notify subscribers</div>
+    <div style="font-size:11px;color:#999;margin-bottom:6px;">sends an email to everyone subscribed, about your most recent post.</div>
+    <button onclick="B.notifySubscribers()">notify subscribers about latest post</button>
+  </div>
+
   <div class="nb-rss">RSS 2.0 | RSS 1.0 | ATOM 0.3</div>
 </div>
 
@@ -732,6 +746,7 @@ function syncAdminUI(){
   var la=el('logoutArea');
   if(la)la.style.display=admin()?'inline':'none';
   var ss=el('songSettings');if(ss)ss.classList.toggle('show',admin());
+  var nb=el('notifyBox');if(nb)nb.classList.toggle('show',admin());
   renderAbout();
 }
 function openLogin(){el('loginGate').classList.add('open');}
@@ -1341,6 +1356,37 @@ function renderCal(){
   gEl.innerHTML=h;
 }
 
+/* ── email subscribers ── */
+function subscribe(){
+  var inp=el('subEmailInp');
+  var email=(inp&&inp.value||'').trim();
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){alert('please enter a valid email !');return;}
+  if(!hasSupabase()){alert('subscriptions need a Supabase connection set up first.');return;}
+  sbFetch('rpc/add_subscriber',{method:'POST',body:{p_email:email}}).then(function(){
+    if(inp)inp.value='';
+    alert('subscribed! you\'ll get an email when there\'s a new post.');
+  }).catch(function(err){
+    alert('could not subscribe — try again in a bit.\n'+(err&&err.message||''));
+  });
+}
+function notifySubscribers(){
+  if(!admin())return;
+  if(!posts||!posts.length){alert('no posts to notify about yet.');return;}
+  if(!hasSupabase()){alert('this needs a Supabase connection set up first.');return;}
+  var latest=posts[0]; // posts are stored newest-first
+  if(!confirm('send an email to all subscribers about "'+latest.title+'"?'))return;
+  fetch(SUPABASE_URL.replace('.supabase.co','.functions.supabase.co')+'/notify-subscribers',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+_token,'Content-Type':'application/json'},
+    body:JSON.stringify({postId:latest.id,title:latest.title,excerpt:(latest.description||latest.desc||'').slice(0,200)})
+  }).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){
+      if(!res.ok){alert('could not notify subscribers: '+(res.d&&res.d.error||'unknown error'));return;}
+      alert('notified '+res.d.sent+' subscriber(s)'+(res.d.failed?(' — '+res.d.failed+' failed'):'')+'.');
+    })
+    .catch(function(err){alert('could not reach the notify function: '+err.message);});
+}
+
 /* ── music ── */
 var SG='bb8_song'; // localStorage fallback key for the saved song's video id
 function saveSongLocal(vid){try{localStorage.setItem(SG,vid);}catch(e){}}
@@ -1406,7 +1452,8 @@ window.B={
   setAboutText:setAboutText,setAboutImgUrl:setAboutImgUrl,prevAboutImg:prevAboutImg,
   saveAbout:saveAbout,
   search:function(q){sq=q.toLowerCase().trim();pg=1;renderPosts();},
-  toggleMusic:toggleMusic
+  toggleMusic:toggleMusic,
+  subscribe:subscribe,notifySubscribers:notifySubscribers
 };
 
 /* ── init ── */
@@ -1435,7 +1482,16 @@ document.addEventListener('DOMContentLoaded',function(){
   });
 });
 
-loadPosts().then(function(list){posts=list;renderPosts();}).catch(function(){renderPosts();});
+loadPosts().then(function(list){
+  posts=list;renderPosts();
+  // if this page was opened from a "notify subscribers" email link
+  // (e.g. ?post=123), jump straight to that post
+  try{
+    var params=new URLSearchParams(location.search);
+    var pid=params.get('post');
+    if(pid){var idNum=Number(pid);if(!isNaN(idNum))B.openPost(idNum);}
+  }catch(e){}
+}).catch(function(){renderPosts();});
 loadAbout().then(function(list){aboutBlocks=list;renderAbout();}).catch(function(){});
 loadCollection().then(function(list){colItems=list||[];}).catch(function(){});
 loadViews();
